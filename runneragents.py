@@ -1,4 +1,4 @@
-#esto es lo que toma las desiciones del jugador y las manda al PlayerAgent no el render
+
 import random
 from agents import Agent
 from environments import SimulatedSensor, SimulatedActuator, SimulatedEnvironment
@@ -67,13 +67,7 @@ class _BaseRunnerAgent(Agent):
     def _done(self): return self._sensors["game_over"].sense()
 
     def _perceive(self):
-        return {
-            "position": self._pos(),
-            "next_obstacle": self._obstacle(),
-            "distance": self._distance(),
-            "errors": self._errors(),
-            "game_over": self._done()
-        }
+        return {name: sensor.sense() for name, sensor in self._sensors.items()}
     def _act(self, percept):
         action= self.function(percept)
         self._actuators["runner"].act(action)
@@ -185,3 +179,4 @@ class CaptorAgent(_BaseRunnerAgent):
         rate = self._env_runner.get_mistake_rate_for_tick(self.base_mistake_rate, multiplier=2.0)
         print(f"[CAPTOR]   pos={pos:>3} | obs={obs:<12}"
               f"dist={dist:>3} | err_propios={own} | err_criminal={opp} | mistake_rate={rate:.0%}")
+

@@ -1,3 +1,4 @@
+#una func ready cuando puede moverse en un diccionario para poder controlar duracion y conldawn
 """
 runnerworld.py — Entorno del Runner Chase game (toda la lógica vive acá)
 Feedback profesor: obstáculos, posiciones, movimientos, ganar/perder,
@@ -58,6 +59,16 @@ OBSTACLE_PATTERNS: dict[ObstacleType, list[str]] = {
     ObstacleType.LOW_BAR:    ["X", "X", "X"],
     ObstacleType.LEDGE_LEFT: ["X", "X", " "],
     ObstacleType.LEDGE_RIGHT:[" ", "X", "X"],
+}
+
+# Efectos laterales por acción (solo cambian columna; run/jump/slide/None no tienen)
+_LATERAL_EFFECTS = {
+    "go_left":  lambda state: setattr(state, "col", max(0, state.col - 1)),
+    "go_right": lambda state: setattr(state, "col", min(GRID_COLS - 1, state.col + 1)),
+    "run":      lambda state: None,
+    "jump":     lambda state: None,
+    "slide":    lambda state: None,
+    None:       lambda state: None,
 }
 
 @unique
@@ -129,9 +140,7 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         self._role_map.pop(agent_id, None)
 
     def add_statebuffer(self, agent_id: int, statebuffer: IStateBuffer) -> None:
-        # Evitar duplicado de super().add_statebuffer que hace append doble
-        self._statebuffers.append({"agent_id": agent_id, "statebuffer": statebuffer})
-        # No llamar a super().add_statebuffer para no duplicar _agents
+        super().add_statebuffer(agent_id, statebuffer)
         statebuffer.update(self._build_state_snapshot(agent_id))
 
     def get_property(self, agent_id: int, property_name: str) -> dict:
@@ -159,69 +168,69 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
             return {"agent": agent_id}
         return {"agent": agent_id, property_name: fn()}
 
+    def _notify_all_buffers(self) -> None:
+        """Construye la grilla una vez y actualiza todos los buffers (estado compartido)."""
+        grid = self._build_grid()
+        for entry in self._statebuffers:
+            snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)
+            entry["statebuffer"].update(snap)
+
+    def _resolve_obstacle_outcome(self, agent_id: int, state: "_AgentState",
+                                  action_name: str | None) -> None:
+        """Lógica común de resolución: acierto/error, avance, distancia, game_over."""
+        obstacle = self._next_obstacle(state.position)
+        correct = CORRECT_ACTIONS[obstacle]
+
+        if action_name is None and obstacle == ObstacleType.NONE:
+            state.last_correct = True
+            state.last_action = None
+            return
+
+        if action_name == correct:
+            state.position = min(state.position + 1, TRACK_LENGTH - 1)
+            state.last_correct = True
+            if state.position > self._obstacle_index:
+                self._obstacle_index = state.position
+                self._obstacle_spawn_time = time.time()
+        else:
+            state.errors += 1
+            state.last_correct = False
+            role = self._role_map[agent_id]
+            if role == Role.PLAYER:
+                self._distance_between += DISTANCE_PER_ERROR
+            else:
+                self._distance_between -= DISTANCE_PER_ERROR
+
+        state.last_action = action_name
+
     def take_action(self, agent_id: int, action_name: str, params: dict = {}) -> None:
-        with self._lock:  
-            self.advance_obstacle_needed()  
+        with self._lock:
+            self.advance_obstacle_needed()
+
             if agent_id not in self._agents or self._game_over:
-                grid = self._build_grid() 
-                for entry in self._statebuffers:
-                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid) 
-                    entry["statebuffer"].update(snap)
+                self._notify_all_buffers()
                 return
+
             if self.DEBUG_FREEZE:
                 self._uniq_states["tick"] = self.tick
                 self._uniq_states["distance"] = self._distance_between
-                grid = self._build_grid()
-                for entry in self._statebuffers:
-                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)
-                    entry["statebuffer"].update(snap)
+                self._notify_all_buffers()
                 self.tick += 1
                 return
-            state = self._states.get(agent_id) 
+
+            state = self._states.get(agent_id)
             if state is None:
                 return
-            obstacle = self._next_obstacle(state.position)
-            correct = CORRECT_ACTIONS[obstacle]
 
-            # Actualizar columna para movimientos laterales
-            if action_name == "go_left":
-                state.col = max(0, state.col - 1)
-            elif action_name == "go_right":
-                state.col = min(GRID_COLS - 1, state.col + 1)
-            
+            effect = _LATERAL_EFFECTS.get(action_name)
+            if effect:
+                effect(state)
 
-            # NONE no penaliza si no hiciste nada
-            if action_name is None and obstacle == ObstacleType.NONE:
-                state.last_correct = True
-                state.last_action = None
-                #------- Error por choque con obstaculo no por != correct -------
-                #pulir a condicion real de colicion
-                #------- Error por choque con obstaculo no por != correct -------
-            else:
-                if action_name == correct:
-                    state.position = min(state.position + 1, TRACK_LENGTH - 1)
-                    state.last_correct = True
-                    # Avanzar índice de obstáculo global si el player acertó
-                    # (sincroniza grilla visual con progreso)
-                    if self._states[agent_id].position > self._obstacle_index:
-                       self._obstacle_index = state.position
-                       self._obstacle_spawn_time = time.time()
-                else:
-                    state.errors += 1
-                    state.last_correct = False
-                    role = self._role_map[agent_id]
-                    if role == Role.PLAYER:
-                        self._distance_between += DISTANCE_PER_ERROR
-                    else:
-                        self._distance_between -= DISTANCE_PER_ERROR
-            state.last_action = action_name
+            self._resolve_obstacle_outcome(agent_id, state, action_name)
             self._check_game_over()
-            grid = self._build_grid()  
-            for entry in self._statebuffers:
-                snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid) 
-                entry["statebuffer"].update(snap)
+            self._notify_all_buffers()
+            self.tick += 1
             self._update_difficulty()
-            #print(f"Agente - {agent_id}: {action_name}")#COMENTARIO PARA ENCONTRAR MAS FACIL Debug para ver por consola las acciones hechas por el agente ante el siguiente obstaculo
 
     def _update_difficulty(self) -> None:
         if self.tick % SPEED_INTERVAL == 0:
