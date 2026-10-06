@@ -1,156 +1,124 @@
-# PRAISE
+# Runner Chase
 
-## Overview
+Implementación del juego **Runner Chase** como entorno multiagente, desarrollada para el proyecto PRAISE del grupo de investigación de la UTN – Facultad Regional Concepción del Uruguay (UTN FRCU).
 
-**PRAISE** (**P**ython **R**emote **A**gents **I**n **S**imulated **E**nvironments) is a Python framework designed to implement and study the **Agent** concept from Artificial Intelligence within a **distributed client-server architecture**. It provides a robust framework for running AI agents that are completely **independent** of the simulated environment, communicating all actions and observations remotely.
+El juego está construido sobre el framework de agentes provisto por los profesores (agentes, sensores, actuadores, entornos simulados y state buffers), y enfrenta a dos roles — **Captor** y **Fugitivo** — en una pista compartida, con bots o un jugador humano (agente humano pendiente de revisión), en consola o con interfaz gráfica (PyGame).
 
-By leveraging [Pyro4](https://github.com/irmen/Pyro4) (Python Remote Objects) for inter-process communication and **Python threading** for concurrent execution, PRAISE allows for the development of highly decoupled, flexible, and scalable multi-agent systems. **A Distributed Vacuum World Simulation** is included to showcase the framework's capabilities.
+## Tabla de contenidos
+- [Reglas del juego](#reglas-del-juego)
+- [Instalación](#️-instalación)
+- [Cómo ejecutarlo](#️-cómo-ejecutarlo)
+- [Comportamiento del bot por defecto](#comportamiento-del-bot-por-defecto)
+- [Estructura del repositorio](#-estructura-del-repositorio)
+- [Créditos](#-créditos)
 
----
+## Reglas del juego
 
-## Features
+### Participantes
+- **Fugitivo** (`Role.CRIMINAL`): corre en una fila fija de la pista.
+- **Captor** (`Role.PLAYER`): corre en una fila que se acerca o se aleja de la del Fugitivo según cómo va la persecución.
 
-* **Distributed Architecture:** Agents and Renderers connect to a central **Pyro4 Server** that hosts the simulation environment, ensuring agents are decoupled from the simulation state.
-* **Agent Independence:** The client-server model allows agents to be developed and run on **completely separate machines**.
-* **Concurrency by Design:** The Client application runs two concurrent threads to handle **distinct responsibilities**:
-    * **Agent Thread:** Dedicated to the agent's decision-making and actions.
-    * **Renderer Thread:** Dedicated to asynchronously fetching the environment state and rendering the world.
-* **Resilient and Decoupled Synchronization:** Uses $\texttt{threading.Event}$ objects with a **timeout** to enforce a turn-taking protocol. This design **prioritizes the Agent's forward progress**, allowing it to execute its action immediately upon timeout, even if the Renderer is slow or fails to fetch the latest state.
-* **Modular Rendering:** All renderers are interchangeable via a common interface, following the **Strategy pattern**. This enables:
-    * **Interchangeability:** Easily swap visualization strategies (e.g., $\texttt{ConsoleRenderer}$ to $\texttt{PyGameRenderer}$).
-    * **Headless Operation:** The inclusion of $\texttt{NullRenderer}$ allows for running the agent simulation at maximum speed without any visualization overhead, perfect for large-scale or remote performance testing.
-* **Dual Execution Modes:** Supports both a **Distributed (Pyro4)** mode for true independence and a **Local (In-Process)** mode for simplified setup and fast debugging.
+### La pista
+- Grilla de 8 filas × 3 columnas (3 carriles).
+- Un obstáculo a la vez cae desde la fila más alta hacia la más baja, a razón de 2 filas por segundo (una fila cada 0.5s, ciclo completo de ~4s por obstáculo).
+- Tipos de obstáculo y la acción que hay que ejecutar contra cada uno:
 
----
+| Obstáculo | Acción correcta | Qué representa |
+|---|---|---|
+| `none` | `run` | Carril libre |
+| `block` | `jump` | Pared completa, hay que saltarla |
+| `low_bar` | `slide` | Barra baja, hay que deslizarse |
+| `ledge_left` | `go_left` | Carriles derecho/centro bloqueados |
+| `ledge_right` | `go_right` | Carriles izquierdo/centro bloqueados |
 
-## Getting Started (Vacuum World Example)
-### Prerequisites
+### Turnos y errores
+- En cada ciclo, cada agente elige una acción (`run`, `jump`, `slide`, `go_left`, `go_right`).
+- Si la acción no coincide con la correcta para el obstáculo del momento, cuenta como **error**.
+- Cada error mueve la distancia entre los dos personajes: un error del Captor **aumenta** la distancia (el Fugitivo se aleja), un error del Fugitivo la **reduce** (el Captor se acerca).
 
-* [Python 3.x](https://www.python.org/downloads/)
-* [Pyro4](https://github.com/irmen/Pyro4)  
-* [Pygame](https://github.com/pygame/pygame) (Optional: Only required to use $\texttt{PyGameRenderer}$)
+### Dificultad creciente
+- Cada agente tiene una probabilidad base de equivocarse (`mistake_rate`).
+- Esa probabilidad sube con el tiempo real de partida: cada pocos segundos (`MISTAKE_RATE_INTERVAL`) se suma un incremento, hasta un tope máximo — así ninguna partida se estanca para siempre.
 
-**Installation**
+### Fin del juego y ganador
+- Si la distancia llega a 0 (o menos), el Captor atrapó al Fugitivo → **gana el Captor**.
+- Si la distancia llega al máximo (`MAX_DISTANCE`), el Fugitivo se escapó → **gana el Fugitivo**.
 
-You must check that Python is installed on your machine. To find out, open a command prompt (if you have Windows) or a terminal (if you have macOS or Linux) and type this:
+## ⚙️ Instalación
+
+**Requisitos**
+- Python 3.10 o superior (se usa la sintaxis `str | None`)
+- PyGame (solo para la interfaz gráfica)
+
 ```
-python --version
-```
+git clone <URL-DEL-REPOSITORIO>
+cd <NOMBRE-DEL-REPOSITORIO>
 
-If a message such as "Python 3.12.9" appears, it means that Python is correctly installed. If an error message appears, it means that it is not yet installed.
-
-Once Python is installed, you have to perform a final check: you have to see if pip is installed. Type the following command:
-```
-pip --version
-```
-
-If a message such as "pip 23.2.1 from . . . " appears, you are ready to continue. 
-
-Let's first install Pyro4, as this is needed to use the Distributed Mode, which is the core feature of this framework. Run this command:
-
-```
-pip install Pyro4
-```
-
-If you intend to use the $\texttt{PyGameRenderer}$, you must also run this command:
-```
 pip install pygame
 ```
 
-You can check the installation of those libraries with one of the following commands:
+## ▶️ Cómo ejecutarlo
 
 ```
-# If using Linux
-pip freeze | egrep "Pyro|pygame"
-
-# If using Windows
-pip freeze | findstr "Pyro pygame"
+python main_runner.py [opciones]
 ```
-This should give you a list containing both Pyro and pygame (if you choose to install it), with their respective installed versions.
 
+| Opción | Descripción | Por defecto |
+|---|---|---|
+| `--console` | Corre en modo consola en vez de PyGame | desactivado (PyGame) |
+| `--stats` | Muestra las estadísticas acumuladas entre partidas y termina | — |
+| `--reset` | Reinicia las estadísticas acumuladas y termina | — |
 
-## Execution Modes
+**Ejemplos**
+```
+# Partida en PyGame (modo por defecto)
+python main_runner.py
 
-### 1. Distributed Mode (Pyro4)
+# Partida en consola
+python main_runner.py --console
 
-This mode runs the environment on a separate process (the server), providing true agent independence and simulating network communication.
+# Ver estadísticas acumuladas (partidas, atrapadas, escapes)
+python main_runner.py --stats
 
+# Reiniciar las estadísticas
+python main_runner.py --reset
+```
 
-**Setup**
+**Controles** (para el Captor, cuando lo controla una persona): `W` saltar, `S` deslizar, `A` carril izquierdo, `D` carril derecho, vacío/Enter avanza el tiempo sin actuar. Funcionan igual tipeando en consola o apretando la tecla en la ventana de PyGame.
 
-To run, start the three components in order:
+> Hoy, para jugar vos como Captor en vez del bot, hay que reemplazar en `main_runner.py` la línea `player = CaptorAgent(env, base_mistake_rate=0.10)` por `player = PlayerAgent(env)` (está comentada al lado, lista para descomentar) — todavía no es un flag de línea de comandos.
 
-1.  **Start the Pyro Name Server (NS):**
-    ```
-    pyro4-ns
-    ```
-2.  **Start the PRAISE Server (Daemon):** Registers the environment and state buffers.
-    ```
-    python main_server.py
-    ```
-3.  **Run the PRAISE Client (Agent):** Connects to the server and starts the concurrent threads.
-    ```
-    python main_client.py
-    ```
+## Comportamiento del bot por defecto
 
-### 2. Local Mode (In-Process)
+`CriminalAgent` (Fugitivo) y `CaptorAgent` (Captor) juegan la misma política probabilística:
+- Calculan cuál es la acción correcta para el obstáculo que tienen encima.
+- Con una probabilidad (`mistake_rate`, creciente con el tiempo) ignoran esa acción y eligen una incorrecta al azar entre un par plausible (por ejemplo, frente a un `block` se pueden confundir y hacer `run` o `slide` en vez de `jump`).
+- `CaptorAgent` arranca con una tasa de error más baja (0.10 contra 0.15 del Fugitivo) pero esa tasa sube el doble de rápido con el tiempo — así ninguno de los dos domina la partida solo por el valor inicial.
 
-This mode runs the entire simulation within a single Python process, bypassing all network overhead while maintaining the core concurrency logic. This is ideal for quick testing and performance benchmarking.
+Estos bots son un punto de partida: están pensados para ser reemplazados por agentes más inteligentes.
+
+## 📁 Estructura del repositorio
 
 ```
-python main.py
+.
+├── main_runner.py        # Punto de entrada: arma el entorno, los agentes y corre los hilos
+├── runnerworld.py         # Entorno: grilla, obstáculos, distancia, turnos y condición de victoria
+├── runneragents.py        # Agentes (CriminalAgent, CaptorAgent, PlayerAgent), sensores y actuador
+├── runnerrenderers.py     # Renderers de consola y PyGame
+├── runnerbuffer.py        # RunnerStateBuffer (implementa IStateBuffer)
+├── Runnerstats.py         # Estadísticas persistentes entre sesiones (stats.json)
+├── agents.py               # Framework base: Agent, Sensor, Actuator
+├── environments.py         # Framework base: SimulatedEnvironment
+├── renderers.py             # Interfaz IRenderer
+├── statebuffer.py           # Interfaz IStateBuffer
+└── Vacuum_version/          # Ejemplo de referencia (Vacuum World) de la cátedra
 ```
----
-## Extending PRAISE
 
-PRAISE is designed around **modular components** and well-defined **interfaces**, making it straightforward to implement your own custom agents, environments, and renderers.
+Los archivos `agents.py`, `environments.py`, `renderers.py`, `statebuffer.py` y la carpeta `Vacuum_version/` provienen del material provisto por los profesores a cargo del grupo de investigación GIICOS.
 
-### 1. Implementing Custom Agents
+## 🎓 Créditos
 
-Agent intelligence resides entirely on the **client side**. To create a new agent, you must inherit from the $\texttt{Agent}$ base class and override its abstract methods:
+Proyecto desarrollado en el marco de PRAISE, grupo de investigación GIICOS de la UTN FRCU (Universidad Tecnológica Nacional – Facultad Regional Concepción del Uruguay).
 
-* **Decision Logic ($\texttt{function}$):** This method takes the agent's current $\texttt{percept}$ (observation) and returns the desired $\texttt{action}$ to be executed. This is where your core AI algorithm lives.
-    ```python
-    def function(self, percept):
-        # Your AI logic here
-        return action
-    ```
-* **Behavior Loop ($\texttt{behave}$):** This method defines the agent's life cycle and must implement the perception-decision-action loop:
-    ```python
-    def behave(self):
-      # 1. Get observation from sensors
-      percept = self._perceive()  
-      # 2. Call the execution method, which internally calculates the action
-      #    and communicates it to the environment.
-      self._act(percept)
-    ```
-* **Sensor/Actuator Implementation:** You must implement concrete $\texttt{SimulatedSensor}$ and $\texttt{SimulatedActuator}$ classes.
-The $\texttt{sense()}$ method will use the environment proxy to call $\texttt{env.get\\_property()}$, and the $\texttt{act()}$ method will call the remote $\texttt{env.take\\_action()}$.
-
-### 2. Creating New Environments
-
-To simulate a new world (e.g., a GridWorld or Traffic Simulation), you must implement new classes on the **server side**:
-
-* **Environment Class:** Inherit from $\texttt{SimulatedEnvironment}$. This class manages the simulation's core state.
-* **State Buffer Class:** You can create a new concrete $\texttt{IStateBuffer}$ implementation if you need specific treatment of the relevant state dictionary from the Environment for the client's renderer.
-* **Pyro Adapter:** Create and register a new Pyro Adapter (e.g., $\texttt{GridWorldPyroAdapter}$) on the server to expose your new environment and its state buffer factory to clients via Pyro4.
-
-### 3. Creating New Renderers 
-
-All renderers must implement the **$\texttt{IRenderer}$ interface**, which enforces the following contract:
-
-* **$\texttt{observe(statebuffer)}$:** This method takes the client-side state buffer proxy (which holds the environment's state data used for rendering) and stores it internally. This establishes the necessary connection for the renderer to retrieve data.
-* **$\texttt{render()}$:** This method is called repeatedly by the client's $\texttt{render\\_thread}$. Its primary role is to call the remote $\texttt{statebuffer.get\\_state()}$ method to fetch the latest state and then visualize it (e.g., print to console, draw a PyGame window).
-
-Example of a headless (non-visual) implementation:
-
-```python
-class NullRenderer(IRenderer):
-    def observe(self, statebuffer):
-        # Accepts the buffer as per contract, but performs no action.
-        pass
-
-    def render(self):
-        # Called repeatedly, but performs no action (headless).
-        pass
-```
+- Framework de agentes y entornos: cátedra / profesores a cargo del grupo.
+- Implementación del juego Runner Chase: Sarlinga Matias.
